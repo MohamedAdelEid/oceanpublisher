@@ -43,4 +43,12 @@ class Serial extends Model
     {
         return $this->hasOne(Product::class, 'id', 'product_id');
     }
+
+    /**
+     * The Serial that has Many Serials.
+     */
+    public function devices()
+    {
+        return $this->belongsToMany(Device::class, 'device_serials', 'serial_id', 'device_id');
+    }
 }
