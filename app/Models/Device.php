@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 class Device extends Model
 {
     use HasFactory;
-    protected $fillable = ['device_number'];
+    protected $fillable = ['device_number', 'device_type'];
 
     /**
      * The Device that has Many Serials.

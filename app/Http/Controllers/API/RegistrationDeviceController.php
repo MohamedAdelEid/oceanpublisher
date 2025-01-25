@@ -31,15 +31,23 @@ class RegistrationDeviceController extends Controller
             $validated = $this->validateStoreRequest($request);
             $deviceNumber = $validated['device_number'];
             $serialNumber = $validated['serial_number'];
+            $deviceType = $validated['device_type'];
 
             $serial = $this->getSerialOrFail($serialNumber);
             $device = Device::where('device_number', $deviceNumber)->first();
 
             if ($device) {
-                return $this->handleExistingDevice($device, $serial, $deviceNumber);
+                if ($device->device_type !== $deviceType) {
+                    return $this->errorResponse(
+                        "Device type mismatch",
+                        self::HTTP_BAD_REQUEST
+                    );
+                } else {
+                    return $this->handleExistingDevice($device, $serial, $deviceNumber);
+                }
             }
 
-            return $this->handleNewDevice($deviceNumber, $serial);
+            return $this->handleNewDevice($deviceNumber, $deviceType, $serial);
 
         } catch (ValidationException $e) {
             return $this->validationErrorResponse($e);
@@ -64,6 +72,8 @@ class RegistrationDeviceController extends Controller
                 $validated['serial_number']
             );
 
+            $exists = $exists && $validated['device_type'] === Device::where('device_number', $validated['device_number'])->first()->device_type;
+
             return $exists
                 ? $this->successResponse('Serial number is valid')
                 : $this->errorResponse('Serial number is Invalid', self::HTTP_BAD_REQUEST);
@@ -86,6 +96,7 @@ class RegistrationDeviceController extends Controller
         return $request->validate([
             'device_number' => 'required|string|max:250',
             'serial_number' => 'required|exists:serials,number',
+            'device_type' => 'required|in:desktop,phone',
         ]);
     }
 
@@ -100,6 +111,7 @@ class RegistrationDeviceController extends Controller
         return $request->validate([
             'device_number' => 'required|exists:devices,device_number',
             'serial_number' => 'required|exists:serials,number',
+            'device_type' => 'required|in:desktop,phone',
         ]);
     }
 
@@ -126,10 +138,17 @@ class RegistrationDeviceController extends Controller
     {
         $serialDevice = $device->serials()->where('number', $serial->number)->first();
 
+        if (Carbon::parse($serial->enddate)->timestamp < Carbon::now()->timestamp) {
+            return $this->errorResponse(
+                "Serial number has expired",
+                self::HTTP_BAD_REQUEST
+            );
+        }
+
         if ($serialDevice) {
             return $this->successResponse(
                 "Device already registered",
-                $this->getDeviceData($serial, $deviceNumber)
+                $this->getDeviceData($serial, $deviceNumber, $device->device_type)
             );
         }
 
@@ -143,7 +162,7 @@ class RegistrationDeviceController extends Controller
         $device->serials()->attach($serial->id);
         return $this->successResponse(
             "Device registered successfully",
-            $this->getDeviceData($serial, $deviceNumber)
+            $this->getDeviceData($serial, $deviceNumber, $device->device_type)
         );
     }
 
@@ -154,8 +173,15 @@ class RegistrationDeviceController extends Controller
      * @param Serial $serial
      * @return JsonResponse
      */
-    private function handleNewDevice(string $deviceNumber, Serial $serial): JsonResponse
+    private function handleNewDevice(string $deviceNumber, string $deviceType, Serial $serial): JsonResponse
     {
+        if (Carbon::parse($serial->enddate)->timestamp < Carbon::now()->timestamp) {
+            return $this->errorResponse(
+                "Serial number has expired",
+                self::HTTP_BAD_REQUEST
+            );
+        }
+
         if ($serial->devices()->exists()) {
             return $this->errorResponse(
                 "Serial number already registered to another device",
@@ -163,12 +189,15 @@ class RegistrationDeviceController extends Controller
             );
         }
 
-        $device = Device::create(['device_number' => $deviceNumber]);
+        $device = Device::create([
+            'device_number' => $deviceNumber,
+            'device_type' => $deviceType
+        ]);
         $device->serials()->attach($serial->id);
 
         return $this->successResponse(
             "Device registered successfully",
-            $this->getDeviceData($serial, $deviceNumber)
+            $this->getDeviceData($serial, $deviceNumber, $deviceType)
         );
     }
 
@@ -196,11 +225,12 @@ class RegistrationDeviceController extends Controller
      * @param string $deviceNumber
      * @return array
      */
-    private function getDeviceData(Serial $serial, string $deviceNumber): array
+    private function getDeviceData(Serial $serial, string $deviceNumber, string $deviceType): array
     {
         return [
             'serial' => $serial->number,
             'device_number' => $deviceNumber,
+            'device_type' => $deviceType,
             'product_name' => $serial->product->title,
             'expire_date' => Carbon::parse($serial->enddate)->timestamp
         ];
